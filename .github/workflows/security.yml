@@ -1,0 +1,149 @@
+# ══════════════════════════════════════════════════════════════════════
+#  SECURITY — Analyse des vulnérabilités
+#  Déclenché : chaque lundi + sur push vers main
+# ══════════════════════════════════════════════════════════════════════
+
+name: Security Scan
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"    # Chaque lundi à 08h00 UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ── Scan dépendances Maven (OWASP) ───────────────────────────────────
+  owasp-backend:
+    name: OWASP Dependency Check — Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      - name: Run OWASP Dependency Check
+        working-directory: backend
+        run: |
+          mvn org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=9 \
+            -DsuppressionFiles=../owasp-suppressions.xml \
+            -B || true
+
+      - name: Upload OWASP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owasp-report
+          path: backend/target/dependency-check-report.html
+          retention-days: 30
+
+  # ── Scan dépendances npm (Audit) ─────────────────────────────────────
+  npm-audit:
+    name: NPM Audit — Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install & Audit
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high || true
+
+  # ── Scan image Docker (Trivy) ────────────────────────────────────────
+  trivy-scan:
+    name: Trivy — Docker Image Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image for scan
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: portfolio-backend:scan
+          cache-from: type=gha
+
+      - name: Run Trivy on backend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: portfolio-backend:scan
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-backend
+
+  # ── CodeQL Analysis ──────────────────────────────────────────────────
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    strategy:
+      matrix:
+        language: [java, javascript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Setup Java 17
+        if: matrix.language == 'java'
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      - name: Build backend for CodeQL
+        if: matrix.language == 'java'
+        working-directory: backend
+        run: mvn compile -DskipTests -B
+
+      - name: Autobuild (JS)
+        if: matrix.language == 'javascript'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

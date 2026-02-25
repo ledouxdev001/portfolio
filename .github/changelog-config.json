@@ -1,0 +1,35 @@
+{
+  "categories": [
+    {
+      "title": "## ✨ Nouvelles fonctionnalités",
+      "labels": ["feature", "enhancement", "feat"]
+    },
+    {
+      "title": "## 🐛 Corrections de bugs",
+      "labels": ["fix", "bugfix", "bug"]
+    },
+    {
+      "title": "## 🐳 Docker / DevOps",
+      "labels": ["docker", "ci", "cd", "devops", "infra"]
+    },
+    {
+      "title": "## 📦 Dépendances",
+      "labels": ["dependencies", "deps"]
+    },
+    {
+      "title": "## 📝 Documentation",
+      "labels": ["docs", "documentation"]
+    }
+  ],
+  "ignore_labels": ["ignore", "duplicate", "wontfix"],
+  "sort": "ASC",
+  "template": "#{{CHANGELOG}}",
+  "pr_template": "- #{{TITLE}} (#{{NUMBER}}) by @#{{AUTHOR}}",
+  "empty_template": "- Aucun changement notable",
+  "label_extractor": [
+    {
+      "pattern": "^(feat|fix|docs|docker|ci|deps).*",
+      "target": "$1"
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+# ══════════════════════════════════════════════════════════════════════
+#  CI — Intégration Continue
+#  Déclenché sur chaque push / pull request vers main ou develop
+#  Étapes : lint → tests backend → build backend → build frontend
+# ══════════════════════════════════════════════════════════════════════
+
+name: CI — Build & Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  JAVA_VERSION: "17"
+  NODE_VERSION: "20"
+
+jobs:
+  # ── 1. BACKEND ───────────────────────────────────────────────────────
+  backend-ci:
+    name: Backend — Test & Build
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testroot
+          MYSQL_DATABASE: portfolio_test
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -ptestroot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          SPRING_DATASOURCE_URL: jdbc:mysql://localhost:3306/portfolio_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+          SPRING_DATASOURCE_USERNAME: test_user
+          SPRING_DATASOURCE_PASSWORD: testpass
+          JWT_SECRET: dGVzdFNlY3JldEtleUZvckNJQ0RUZXN0aW5nT25seU5vdEZvclByb2R1Y3Rpb24h
+          JWT_EXPIRATION: 86400000
+        run: mvn test -B
+
+      - name: Build JAR (skip tests — already ran)
+        working-directory: backend
+        run: mvn package -DskipTests -B
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/target/*.jar
+          retention-days: 7
+
+  # ── 2. FRONTEND ──────────────────────────────────────────────────────
+  frontend-ci:
+    name: Frontend — Install & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build React app
+        working-directory: frontend
+        env:
+          CI: false
+          REACT_APP_API_URL: /api
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 7
+
+  # ── 3. DOCKER BUILD CHECK ────────────────────────────────────────────
+  docker-build-check:
+    name: Docker — Build Images
+    runs-on: ubuntu-latest
+    needs: [backend-ci, frontend-ci]
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: portfolio-backend:ci
+
+      - name: Build frontend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: portfolio-frontend:ci

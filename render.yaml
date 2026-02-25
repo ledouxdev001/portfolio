@@ -1,0 +1,74 @@
+## render.yaml — Déploiement Render.com (GRATUIT)
+## Placer ce fichier à la RACINE du dépôt Git
+
+databases:
+  - name: portfolio-db
+    databaseName: portfolio_db
+    plan: free
+
+services:
+  # ── Backend Spring Boot ──────────────────────────────────────────
+  - type: web
+    name: portfolio-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /actuator/health
+
+    envVars:
+      # PostgreSQL — injecté automatiquement par Render
+      - key: SPRING_DATASOURCE_URL
+        fromDatabase:
+          name: portfolio-db
+          property: connectionString
+
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: portfolio-db
+          property: user
+
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: portfolio-db
+          property: password
+
+      # JWT — généré automatiquement
+      - key: JWT_SECRET
+        generateValue: true
+
+      - key: JWT_EXPIRATION
+        value: "86400000"
+
+      # Admin — à saisir dans le dashboard Render
+      - key: ADMIN_USERNAME
+        sync: false
+
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      - key: ADMIN_EMAIL
+        sync: false
+
+      # CORS — pointe vers le frontend
+      - key: APP_CORS_ALLOWED_ORIGINS
+        fromService:
+          name: portfolio-frontend
+          type: web
+          property: url
+
+  # ── Frontend React + Nginx ───────────────────────────────────────
+  - type: web
+    name: portfolio-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+
+    envVars:
+      # URL du backend — Nginx l'utilise pour le proxy /api/
+      - key: http://backend:8080/api/
+        fromService:
+          name: portfolio-backend
+          type: web
+          property: url

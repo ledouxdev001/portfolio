@@ -20,7 +20,7 @@ yarn-error.log*
 .npm
 
 # ── Environment / Secrets ─────────────────────
-.env
+.env*
 .env.local
 .env.*.local
 !.env.example
